@@ -10,6 +10,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
+from aiogram.client.default import DefaultBotProperties
 from rq import Queue
 import redis
 
@@ -40,7 +41,7 @@ REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
 REDIS_DB = int(os.getenv('REDIS_DB', 0))
 
 # Создаём объекты бота и диспетчера
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 # Подключения к Redis
