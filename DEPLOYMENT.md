@@ -26,9 +26,15 @@
 ```bash
 # Токен Telegram бота
 BOT_TOKEN=YOUR_BOT_TOKEN_HERE
+
+# ID администратора для уведомлений (опционально)
+ADMIN_USER_ID=YOUR_USER_ID_HERE
 ```
 
-**Важно!** Замените `YOUR_BOT_TOKEN_HERE` на токен, полученный от @BotFather.
+**Важно!** 
+- Замените `YOUR_BOT_TOKEN_HERE` на токен, полученный от @BotFather
+- Замените `YOUR_USER_ID_HERE` на ваш Telegram User ID (можно получить от @userinfobot)
+- `ADMIN_USER_ID` опционален - если не указать, уведомления о запуске не будут отправляться
 
 ## Автоматическая пересборка через GitHub Actions
 
