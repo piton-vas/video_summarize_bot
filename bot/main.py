@@ -6,6 +6,8 @@ import json
 import uuid
 import re
 import aiohttp
+import zipfile
+import shutil
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
@@ -333,6 +335,54 @@ def is_valid_url(url):
     return url_pattern.match(url) is not None
 
 
+def extract_zip_and_find_media(zip_path, extract_dir):
+    """Распаковывает ZIP архив и находит медиа-файлы"""
+    try:
+        media_files = []
+        allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac']
+        
+        # Проверяем, что это действительно ZIP файл
+        if not zipfile.is_zipfile(zip_path):
+            return None, "Файл не является валидным ZIP архивом"
+        
+        # Создаем директорию для извлечения
+        os.makedirs(extract_dir, exist_ok=True)
+        
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            # Проверяем размер распакованных файлов (защита от zip-bomb)
+            total_size = 0
+            for file_info in zip_ref.infolist():
+                total_size += file_info.file_size
+                if total_size > 1024 * 1024 * 1024:  # 1 ГБ лимит
+                    return None, "Архив слишком большой после распаковки (больше 1 ГБ)"
+            
+            # Распаковываем архив
+            zip_ref.extractall(extract_dir)
+            
+            # Ищем медиа-файлы
+            for root, dirs, files in os.walk(extract_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    # Отбрасываем символы подчеркивания и проверяем расширение
+                    clean_name = file.rstrip('_')
+                    if any(clean_name.lower().endswith(ext) for ext in allowed_extensions):
+                        # Проверяем размер файла
+                        if os.path.getsize(file_path) <= 500 * 1024 * 1024:  # 500 МБ лимит
+                            media_files.append((file_path, clean_name))
+        
+        if not media_files:
+            return None, "В архиве не найдено медиа-файлов поддерживаемых форматов"
+        
+        # Если несколько файлов, выбираем первый
+        if len(media_files) > 1:
+            return media_files[0], f"Найдено {len(media_files)} медиа-файлов, обрабатываю первый: {media_files[0][1]}"
+        else:
+            return media_files[0], f"Найден медиа-файл: {media_files[0][1]}"
+            
+    except Exception as e:
+        return None, f"Ошибка при распаковке архива: {str(e)}"
+
+
 async def convert_cloud_url_to_direct(url):
     """Преобразует ссылки облачных хранилищ в прямые ссылки"""
     try:
@@ -409,8 +459,9 @@ async def command_start_handler(message: Message) -> None:
         f"• /help - подробная справка\n"
         f"• /status - статус системы\n\n"
         f"<b>Как использовать:</b>\n"
-        f"Отправьте мне видео/аудио файл или ссылку на файл, и я создам расшифровку с кратким содержанием!\n\n"
+        f"Отправьте мне видео/аудио файл, ZIP архив или ссылку на файл, и я создам расшифровку с кратким содержанием!\n\n"
         f"📎 Файлы до 20 МБ - прикрепите напрямую\n"
+        f"📦 ZIP архивы - автоматическая распаковка\n"
         f"🔗 Файлы до 500 МБ - отправьте ссылку\n"
         f"☁️ Поддерживаются облачные хранилища (включая Яндекс.Диск)"
     )
@@ -469,7 +520,8 @@ async def help_handler(message: Message) -> None:
         "<b>🎥 Бот для расшифровки видео и аудио</b>\n\n"
         "<b>Поддерживаемые форматы:</b>\n"
         "• Видео: MP4, AVI, MOV, MKV, WMV, WEBM\n"
-        "• Аудио: MP3, WAV, M4A, OGG, FLAC\n\n"
+        "• Аудио: MP3, WAV, M4A, OGG, FLAC\n"
+        "• Архивы: ZIP (с медиа-файлами внутри)\n\n"
         "<b>Способы отправки файлов:</b>\n"
         "1. 📎 Прикрепить файл напрямую (до 20 МБ)\n"
         "2. 🔗 Отправить ссылку на файл (до 500 МБ)\n"
@@ -525,13 +577,14 @@ async def media_handler(message: Message) -> None:
         clean_file_name = file_name.rstrip('_')
         
         # Проверяем расширение файла
-        allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac']
+        allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac', '.zip']
         if not any(clean_file_name.lower().endswith(ext) for ext in allowed_extensions):
             await message.answer(
                 "❌ Неподдерживаемый формат файла.\n\n"
                 "Поддерживаемые форматы:\n"
                 "• Видео: MP4, AVI, MOV, MKV, WMV, WEBM\n"
-                "• Аудио: MP3, WAV, M4A, OGG, FLAC"
+                "• Аудио: MP3, WAV, M4A, OGG, FLAC\n"
+                "• Архивы: ZIP (с медиа-файлами внутри)"
             )
             return
     
@@ -572,12 +625,34 @@ async def media_handler(message: Message) -> None:
             await status_message.edit_text("📥 Скачиваю файл...")
             await bot.download_file(file.file_path, tmp_path)
             
+            # Проверяем, является ли файл ZIP архивом
+            final_file_path = tmp_path
+            if clean_file_name.lower().endswith('.zip'):
+                await status_message.edit_text("📦 Распаковываю архив...")
+                extract_dir = tmp_path + '_extracted'
+                result = extract_zip_and_find_media(tmp_path, extract_dir)
+                
+                if result[0] is None:
+                    await status_message.edit_text(f"❌ {result[1]}")
+                    # Удаляем временные файлы
+                    os.unlink(tmp_path)
+                    if os.path.exists(extract_dir):
+                        shutil.rmtree(extract_dir)
+                    return
+                
+                # Получаем путь к медиа-файлу
+                media_file_path, media_file_name = result[0]
+                final_file_path = media_file_path
+                
+                await status_message.edit_text(f"📦 {result[1]}")
+                await asyncio.sleep(1)  # Показываем сообщение пользователю
+            
             # Генерируем уникальный ID задачи
             task_id = str(uuid.uuid4())
             
             # Добавляем задачу в очередь
             await status_message.edit_text("📋 Добавляю в очередь обработки...")
-            job = await add_video_task(user_id, tmp_path, task_id)
+            job = await add_video_task(user_id, final_file_path, task_id)
             
             if job:
                 await status_message.edit_text("⏳ Задача добавлена в очередь. Ожидание обработки...")
@@ -597,6 +672,13 @@ async def media_handler(message: Message) -> None:
         # Сбрасываем состояние обработки
         if user_id in user_states:
             user_states[user_id]['processing'] = False
+        
+                # Очищаем временные файлы (для ZIP архивов)
+        try:
+            if 'extract_dir' in locals() and os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir)
+        except Exception as e:
+            logger.error(f"Ошибка при очистке временных файлов: {e}")
 
 
 @dp.message(lambda message: message.text and is_valid_url(message.text.strip()))
@@ -635,24 +717,47 @@ async def url_handler(message: Message) -> None:
         clean_file_name = file_name.rstrip('_')
         
         # Проверяем расширение файла
-        allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac']
+        allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac', '.zip']
         if not any(clean_file_name.lower().endswith(ext) for ext in allowed_extensions):
             await status_message.edit_text(
                 "❌ Неподдерживаемый формат файла.\n\n"
                 "Поддерживаемые форматы:\n"
                 "• Видео: MP4, AVI, MOV, MKV, WMV, WEBM\n"
-                "• Аудио: MP3, WAV, M4A, OGG, FLAC"
+                "• Аудио: MP3, WAV, M4A, OGG, FLAC\n"
+                "• Архивы: ZIP (с медиа-файлами внутри)"
             )
             # Удаляем временный файл
             os.unlink(tmp_path)
             return
+        
+        # Проверяем, является ли файл ZIP архивом
+        final_file_path = tmp_path
+        if clean_file_name.lower().endswith('.zip'):
+            await status_message.edit_text("📦 Распаковываю архив...")
+            extract_dir = tmp_path + '_extracted'
+            result = extract_zip_and_find_media(tmp_path, extract_dir)
+            
+            if result[0] is None:
+                await status_message.edit_text(f"❌ {result[1]}")
+                # Удаляем временные файлы
+                os.unlink(tmp_path)
+                if os.path.exists(extract_dir):
+                    shutil.rmtree(extract_dir)
+                return
+            
+            # Получаем путь к медиа-файлу
+            media_file_path, media_file_name = result[0]
+            final_file_path = media_file_path
+            
+            await status_message.edit_text(f"📦 {result[1]}")
+            await asyncio.sleep(1)  # Показываем сообщение пользователю
         
         # Генерируем уникальный ID задачи
         task_id = str(uuid.uuid4())
         
         # Добавляем задачу в очередь
         await status_message.edit_text("📋 Добавляю в очередь обработки...")
-        job = await add_video_task(user_id, tmp_path, task_id)
+        job = await add_video_task(user_id, final_file_path, task_id)
         
         if job:
             await status_message.edit_text("⏳ Задача добавлена в очередь. Ожидание обработки...")
@@ -672,6 +777,13 @@ async def url_handler(message: Message) -> None:
         # Сбрасываем состояние обработки
         if user_id in user_states:
             user_states[user_id]['processing'] = False
+        
+        # Очищаем временные файлы (для ZIP архивов)
+        try:
+            if 'extract_dir' in locals() and os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir)
+        except Exception as e:
+            logger.error(f"Ошибка при очистке временных файлов: {e}")
 
 
 @dp.message()
@@ -684,6 +796,7 @@ async def echo_handler(message: Message) -> None:
         "Отправьте мне:\n"
         "• Видео файл (MP4, AVI, MOV, MKV, WMV, WEBM)\n"
         "• Аудио файл (MP3, WAV, M4A, OGG, FLAC)\n"
+        "• ZIP архив с медиа-файлами\n"
         "• Ссылку на файл (до 500 МБ)\n"
         "• Файлы из облачных хранилищ (Google Drive, Dropbox, OneDrive, Яндекс.Диск)\n\n"
         "Или используйте команду /help для подробной справки."
