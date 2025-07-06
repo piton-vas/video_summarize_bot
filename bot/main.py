@@ -255,7 +255,7 @@ async def help_handler(message: Message) -> None:
     await message.answer(
         "<b>🎥 Бот для расшифровки видео и аудио</b>\n\n"
         "<b>Поддерживаемые форматы:</b>\n"
-        "• Видео: MP4, AVI, MOV, MKV, WMV\n"
+        "• Видео: MP4, AVI, MOV, MKV, WMV, WEBM\n"
         "• Аудио: MP3, WAV, M4A, OGG, FLAC\n\n"
         "<b>Что делает бот:</b>\n"
         "1. Принимает ваш файл\n"
@@ -302,12 +302,12 @@ async def media_handler(message: Message) -> None:
         file_name = message.document.file_name or f"document_{user_id}_{message.message_id}"
         
         # Проверяем расширение файла
-        allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.mp3', '.wav', '.m4a', '.ogg', '.flac']
+        allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac']
         if not any(file_name.lower().endswith(ext) for ext in allowed_extensions):
             await message.answer(
                 "❌ Неподдерживаемый формат файла.\n\n"
                 "Поддерживаемые форматы:\n"
-                "• Видео: MP4, AVI, MOV, MKV, WMV\n"
+                "• Видео: MP4, AVI, MOV, MKV, WMV, WEBM\n"
                 "• Аудио: MP3, WAV, M4A, OGG, FLAC"
             )
             return
@@ -377,7 +377,7 @@ async def echo_handler(message: Message) -> None:
     await message.answer(
         "🤖 Я умею обрабатывать только видео и аудио файлы.\n\n"
         "Отправьте мне:\n"
-        "• Видео файл (MP4, AVI, MOV, MKV, WMV)\n"
+        "• Видео файл (MP4, AVI, MOV, MKV, WMV, WEBM)\n"
         "• Аудио файл (MP3, WAV, M4A, OGG, FLAC)\n\n"
         "Или используйте команду /help для подробной справки."
     )
