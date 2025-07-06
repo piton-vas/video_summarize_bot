@@ -50,7 +50,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
-    container_name: video_worker
     restart: unless-stopped
     environment:
       - REDIS_HOST=redis
@@ -64,7 +63,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    scale: 2  # Запускаем 2 воркера для параллельной обработки
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
 
@@ -90,20 +88,15 @@ services:
     container_name: watchtower
     environment:
       - WATCHTOWER_NOTIFICATIONS_LEVEL=info
-      - WATCHTOWER_REGISTRY_USERNAME=${REPO_USER}
-      - WATCHTOWER_REGISTRY_PASSWORD=${REPO_PASS}
-      - WATCHTOWER_REGISTRY_URL=https://ghcr.io
       - WATCHTOWER_INCLUDE_STOPPED=true
       - WATCHTOWER_REVIVE_STOPPED=false
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ~/.docker:/root/.docker:ro
     command: >
       --interval 60
       --cleanup
       --label-enable
       --debug
-      --registry-credentials
     restart: unless-stopped
     networks:
       - bot-network
