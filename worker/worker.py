@@ -42,6 +42,16 @@ class VideoProcessor:
         logger.info(f"Начинаю обработку задачи {task_id} для пользователя {user_id}")
         
         try:
+            # Проверяем существование файла
+            if os.path.exists(file_path):
+                file_size = os.path.getsize(file_path)
+                file_size_mb = file_size / (1024 * 1024)
+                logger.info(f"Размер файла: {file_size_mb:.2f} МБ")
+            else:
+                error_msg = f"Файл не найден: {file_path}"
+                self.set_task_status(task_id, "failed", error_msg)
+                return
+            
             # Устанавливаем статус в Redis
             self.set_task_status(task_id, "processing", "Начинаю обработку...")
             
@@ -61,6 +71,10 @@ class VideoProcessor:
                 self.set_task_status(task_id, "failed", "Ошибка обработки видео")
                 logger.error(f"Задача {task_id} завершена с ошибкой")
                 
+        except MemoryError as e:
+            error_msg = f"Недостаточно памяти для обработки файла: {str(e)}"
+            self.set_task_status(task_id, "failed", error_msg)
+            logger.error(f"Задача {task_id}: {error_msg}")
         except Exception as e:
             error_msg = f"Ошибка обработки: {str(e)}"
             self.set_task_status(task_id, "failed", error_msg)

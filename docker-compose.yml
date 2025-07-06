@@ -12,6 +12,12 @@ services:
       - redis_data:/data
     networks:
       - app-network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
 
   # Telegram Bot
   bot:
@@ -31,6 +37,12 @@ services:
       - shared_files:/tmp/shared
     networks:
       - app-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
 
   # Video Worker
   worker:
@@ -49,7 +61,12 @@ services:
     networks:
       - app-network
     deploy:
-      replicas: 2
+      replicas: 1
+      resources:
+        limits:
+          memory: 1500M
+        reservations:
+          memory: 512M
 
   # Redis Commander для мониторинга (опционально)
   redis-commander:
