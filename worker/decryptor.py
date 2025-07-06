@@ -249,15 +249,15 @@ async def transcribe_with_whisper(mp3_path, set_status=None):
         except:
             total_duration = 3600  # По умолчанию 1 час
         
-                 # Обрабатываем файл частями по 5 минут для экономии памяти
-         chunk_duration = 300  # 5 минут
+        # Обрабатываем файл частями по 5 минут для экономии памяти
+        chunk_duration = 300  # 5 минут
         chunks_count = int(total_duration / chunk_duration) + 1
         
         all_text = ""
         all_segments = []
         time_offset = 0
         
-                 model = whisper.load_model("tiny", device="cpu")  # Принудительно CPU для экономии памяти
+        model = whisper.load_model("tiny", device="cpu")  # Принудительно CPU для экономии памяти
         
         for chunk_idx in range(chunks_count):
             if set_status:
