@@ -84,8 +84,7 @@ async def add_video_task(user_id, file_path, task_id):
         }
         
         # Добавляем задачу в очередь
-        from worker import process_video_sync
-        job = video_queue.enqueue(process_video_sync, task_data, timeout=1800)  # 30 минут
+        job = video_queue.enqueue('worker.process_video_sync', task_data, timeout=1800)  # 30 минут
         
         logger.info(f"Задача {task_id} добавлена в очередь для пользователя {user_id}")
         return job
