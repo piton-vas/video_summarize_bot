@@ -219,7 +219,8 @@ async def download_file_from_url(url, max_size=500*1024*1024):
                         download_url = result['href']
                         
                         # Теперь работаем с прямой ссылкой
-                        async with session.head(download_url) as dl_response:
+                        # Для Яндекс.Диска нужно разрешить редиректы
+                        async with session.head(download_url, allow_redirects=True) as dl_response:
                             if dl_response.status != 200:
                                 return None, f"Не удалось получить файл с Яндекс.Диска (код {dl_response.status})"
                             
@@ -248,7 +249,7 @@ async def download_file_from_url(url, max_size=500*1024*1024):
                         with tempfile.NamedTemporaryFile(delete=False, dir=temp_dir) as tmp_file:
                             tmp_path = tmp_file.name
                             
-                            async with session.get(download_url) as dl_response:
+                            async with session.get(download_url, allow_redirects=True) as dl_response:
                                 if dl_response.status != 200:
                                     return None, f"Не удалось скачать файл с Яндекс.Диска (код {dl_response.status})"
                                 
@@ -266,7 +267,7 @@ async def download_file_from_url(url, max_size=500*1024*1024):
                     return None, f"Ошибка обработки Яндекс.Диска: {str(e)}"
             
             # Обычная обработка для других URL
-            async with session.head(url) as response:
+            async with session.head(url, allow_redirects=True) as response:
                 if response.status != 200:
                     return None, f"Не удалось получить файл (код {response.status})"
                 
@@ -297,7 +298,7 @@ async def download_file_from_url(url, max_size=500*1024*1024):
             with tempfile.NamedTemporaryFile(delete=False, dir=temp_dir) as tmp_file:
                 tmp_path = tmp_file.name
                 
-                async with session.get(url) as response:
+                async with session.get(url, allow_redirects=True) as response:
                     if response.status != 200:
                         return None, f"Не удалось скачать файл (код {response.status})"
                     
