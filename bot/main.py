@@ -193,7 +193,79 @@ async def handle_task_completion(user_id, result_data, status_message):
 async def download_file_from_url(url, max_size=500*1024*1024):
     """Скачивает файл по URL с проверкой размера"""
     try:
-        async with aiohttp.ClientSession() as session:
+        # Увеличиваем лимиты для заголовков (для cloud.mail.ru)
+        connector = aiohttp.TCPConnector(limit_per_host=10)
+        timeout = aiohttp.ClientTimeout(total=300)  # 5 минут
+        
+        async with aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+            max_line_size=16384,  # Увеличиваем лимит строки заголовка
+            max_field_size=16384   # Увеличиваем лимит поля заголовка
+        ) as session:
+            # Специальная обработка для Яндекс.Диска API
+            if 'cloud-api.yandex.net' in url:
+                try:
+                    async with session.get(url) as response:
+                        if response.status != 200:
+                            return None, f"Не удалось получить ссылку с Яндекс.Диска (код {response.status})"
+                        
+                        result = await response.json()
+                        if 'href' not in result:
+                            return None, "Не удалось получить прямую ссылку с Яндекс.Диска"
+                        
+                        # Получаем прямую ссылку из API
+                        download_url = result['href']
+                        
+                        # Теперь работаем с прямой ссылкой
+                        async with session.head(download_url) as dl_response:
+                            if dl_response.status != 200:
+                                return None, f"Не удалось получить файл с Яндекс.Диска (код {dl_response.status})"
+                            
+                            # Проверяем размер файла
+                            content_length = dl_response.headers.get('content-length')
+                            if content_length and int(content_length) > max_size:
+                                size_mb = int(content_length) / (1024 * 1024)
+                                return None, f"Файл слишком большой ({size_mb:.1f} МБ). Максимум: {max_size/(1024*1024):.0f} МБ"
+                            
+                            # Получаем имя файла
+                            file_name = None
+                            content_disposition = dl_response.headers.get('content-disposition')
+                            if content_disposition:
+                                filename_match = re.search(r'filename[*]?=([^;]+)', content_disposition)
+                                if filename_match:
+                                    file_name = filename_match.group(1).strip('"\'')
+                            
+                            if not file_name:
+                                file_name = os.path.basename(download_url.split('?')[0])
+                            
+                            if not file_name or '.' not in file_name:
+                                file_name = 'yandex_disk_file'
+                        
+                        # Скачиваем файл
+                        temp_dir = '/tmp/shared' if os.path.exists('/tmp/shared') else '/tmp'
+                        with tempfile.NamedTemporaryFile(delete=False, dir=temp_dir) as tmp_file:
+                            tmp_path = tmp_file.name
+                            
+                            async with session.get(download_url) as dl_response:
+                                if dl_response.status != 200:
+                                    return None, f"Не удалось скачать файл с Яндекс.Диска (код {dl_response.status})"
+                                
+                                downloaded_size = 0
+                                async for chunk in dl_response.content.iter_chunked(8192):
+                                    downloaded_size += len(chunk)
+                                    if downloaded_size > max_size:
+                                        os.unlink(tmp_path)
+                                        return None, f"Файл слишком большой (больше {max_size/(1024*1024):.0f} МБ)"
+                                    tmp_file.write(chunk)
+                            
+                            return tmp_path, file_name
+                        
+                except Exception as e:
+                    return None, f"Ошибка обработки Яндекс.Диска: {str(e)}"
+            
+            # Обычная обработка для других URL
             async with session.head(url) as response:
                 if response.status != 200:
                     return None, f"Не удалось получить файл (код {response.status})"
@@ -241,7 +313,11 @@ async def download_file_from_url(url, max_size=500*1024*1024):
                 
     except Exception as e:
         logger.error(f"Ошибка скачивания файла по URL: {e}")
-        return None, f"Ошибка скачивания: {str(e)}"
+        error_msg = str(e)
+        
+
+        
+        return None, f"Ошибка скачивания: {error_msg}"
 
 
 def is_valid_url(url):
@@ -259,18 +335,8 @@ def is_valid_url(url):
 async def convert_cloud_url_to_direct(url):
     """Преобразует ссылки облачных хранилищ в прямые ссылки"""
     try:
-        # Обработка cloud.mail.ru
-        if 'cloud.mail.ru/public/' in url:
-            # Извлекаем код файла из URL
-            match = re.search(r'cloud\.mail\.ru/public/([^/]+)', url)
-            if match:
-                file_code = match.group(1)
-                # Формируем прямую ссылку для скачивания
-                direct_url = f"https://cloud.mail.ru/public/{file_code}?download=1"
-                return direct_url
-        
         # Обработка Google Drive
-        elif 'drive.google.com' in url:
+        if 'drive.google.com' in url:
             # Извлекаем ID файла
             file_id = None
             if '/file/d/' in url:
@@ -301,6 +367,24 @@ async def convert_cloud_url_to_direct(url):
             else:
                 direct_url = url + '?download=1'
             return direct_url
+        
+        # Обработка Яндекс.Диска
+        elif 'disk.yandex.ru/d/' in url:
+            # Извлекаем ключ из URL вида https://disk.yandex.ru/d/KEY
+            match = re.search(r'disk\.yandex\.ru/d/([^/?]+)', url)
+            if match:
+                key = match.group(1)
+                # Используем публичный API Яндекс.Диска для получения прямой ссылки
+                direct_url = f"https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=https://disk.yandex.ru/d/{key}"
+                return direct_url
+        
+        # Обработка других форматов Яндекс.Диска
+        elif 'disk.yandex.ru' in url and ('/i/' in url or '/d/' in url):
+            # Для старых форматов ссылок Яндекс.Диска
+            if '?download=1' not in url:
+                separator = '&' if '?' in url else '?'
+                direct_url = url + separator + 'download=1'
+                return direct_url
             
         # Если не удалось преобразовать, возвращаем исходный URL
         return url
@@ -327,7 +411,7 @@ async def command_start_handler(message: Message) -> None:
         f"Отправьте мне видео/аудио файл или ссылку на файл, и я создам расшифровку с кратким содержанием!\n\n"
         f"📎 Файлы до 20 МБ - прикрепите напрямую\n"
         f"🔗 Файлы до 500 МБ - отправьте ссылку\n"
-        f"☁️ Поддерживаются облачные хранилища"
+        f"☁️ Поддерживаются облачные хранилища (включая Яндекс.Диск)"
     )
 
 
@@ -389,7 +473,8 @@ async def help_handler(message: Message) -> None:
         "1. 📎 Прикрепить файл напрямую (до 20 МБ)\n"
         "2. 🔗 Отправить ссылку на файл (до 500 МБ)\n"
         "   • Прямые ссылки на файлы\n"
-        "   • Cloud.mail.ru, Google Drive, Dropbox, OneDrive\n\n"
+        "   • Google Drive, Dropbox, OneDrive\n"
+        "   • Яндекс.Диск\n\n"
         "<b>Что делает бот:</b>\n"
         "1. Принимает ваш файл или ссылку\n"
         "2. Ставит задачу в очередь обработки\n"
@@ -599,7 +684,7 @@ async def echo_handler(message: Message) -> None:
         "• Видео файл (MP4, AVI, MOV, MKV, WMV, WEBM)\n"
         "• Аудио файл (MP3, WAV, M4A, OGG, FLAC)\n"
         "• Ссылку на файл (до 500 МБ)\n"
-        "• Файлы из облачных хранилищ (Mail.ru, Google Drive, Dropbox, OneDrive)\n\n"
+        "• Файлы из облачных хранилищ (Google Drive, Dropbox, OneDrive, Яндекс.Диск)\n\n"
         "Или используйте команду /help для подробной справки."
     )
 
