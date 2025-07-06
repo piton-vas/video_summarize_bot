@@ -19,19 +19,7 @@
 3. Следуйте инструкциям для создания нового бота
 4. Сохраните полученный токен
 
-### 2. Создание GitHub Personal Access Token
-
-Для автоматического обновления приватных образов через Watchtower:
-
-1. Перейдите в [GitHub Settings → Developer settings → Personal access tokens](https://github.com/settings/tokens)
-2. Нажмите **Generate new token (classic)**
-3. Дайте токену имя (например, "Watchtower Token")
-4. Выберите срок действия
-5. В разделе **Select scopes** поставьте галочку **read:packages**
-6. Нажмите **Generate token**
-7. **Скопируйте токен** (он показывается только один раз!)
-
-### 3. Настройка переменных окружения
+### 2. Настройка переменных окружения
 
 Создайте файл `.env` в корне проекта со следующим содержимым:
 
@@ -41,18 +29,12 @@ BOT_TOKEN=YOUR_BOT_TOKEN_HERE
 
 # ID администратора для уведомлений (опционально)
 ADMIN_USER_ID=YOUR_USER_ID_HERE
-
-# GitHub учётные данные для Watchtower (для приватных образов)
-REPO_USER=piton-vas
-REPO_PASS=YOUR_GITHUB_TOKEN_HERE
 ```
 
 **Важно!** 
 - Замените `YOUR_BOT_TOKEN_HERE` на токен, полученный от @BotFather
 - Замените `YOUR_USER_ID_HERE` на ваш Telegram User ID (можно получить от @userinfobot)
-- Замените `YOUR_GITHUB_TOKEN_HERE` на ваш GitHub Personal Access Token с правами `read:packages`
 - `ADMIN_USER_ID` опционален - если не указать, уведомления о запуске не будут отправляться
-- `REPO_USER` и `REPO_PASS` нужны для автоматического обновления приватных образов через Watchtower
 
 ## Автоматическая пересборка через GitHub Actions
 
@@ -271,6 +253,21 @@ video_summarize_bot/
 3. Проверьте логи Watchtower: `docker logs watchtower`
 4. Убедитесь, что используется `docker-compose.prod-auto.yml` с Watchtower
 5. Проверьте, что контейнер имеет правильные labels для Watchtower
+
+#### Проблемы с доступом к образу:
+Если Watchtower не может получить доступ к образу, попробуйте:
+
+**Способ 1 (рекомендуемый):** Обновленная конфигурация
+```bash
+# Обновите docker-compose.prod-auto.yml до последней версии
+curl -o docker-compose.yml https://raw.githubusercontent.com/piton-vas/video_summarize_bot/main/docker-compose.prod-auto.yml
+```
+
+**Способ 2:** Перезапуск Watchtower
+```bash
+# Перезапустите Watchtower для обновления кеша
+docker-compose restart watchtower
+```
 
 ### Проблемы с сетью
 1. Убедитесь, что у Docker есть доступ к интернету
