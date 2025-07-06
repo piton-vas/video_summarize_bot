@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   telegram-bot:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/video_summarize_bot:latest
+    image: ghcr.io/piton-vas/video_summarize_bot:latest
     container_name: video_summarize_bot
     restart: unless-stopped
     environment:
