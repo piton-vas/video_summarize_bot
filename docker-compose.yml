@@ -64,9 +64,9 @@ services:
       replicas: 1
       resources:
         limits:
-          memory: 1500M
+          memory: 1200M
         reservations:
-          memory: 512M
+          memory: 256M
 
   # Redis Commander для мониторинга (опционально)
   redis-commander:
