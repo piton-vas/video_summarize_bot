@@ -308,9 +308,12 @@ async def media_handler(message: Message) -> None:
         file_info = message.document
         file_name = message.document.file_name or f"document_{user_id}_{message.message_id}"
         
+        # Отбрасываем последние символы подчеркивания из имени файла
+        clean_file_name = file_name.rstrip('_')
+        
         # Проверяем расширение файла
         allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac']
-        if not any(file_name.lower().endswith(ext) for ext in allowed_extensions):
+        if not any(clean_file_name.lower().endswith(ext) for ext in allowed_extensions):
             await message.answer(
                 "❌ Неподдерживаемый формат файла.\n\n"
                 "Поддерживаемые форматы:\n"
@@ -350,7 +353,12 @@ async def media_handler(message: Message) -> None:
         
         # Создаем временный файл в shared volume
         temp_dir = '/tmp/shared' if os.path.exists('/tmp/shared') else '/tmp'
-        suffix = os.path.splitext(file_name)[1] if file_name else '.tmp'
+        # Для документов используем очищенное имя файла для получения правильного расширения
+        if message.content_type == 'document':
+            clean_file_name = file_name.rstrip('_')
+            suffix = os.path.splitext(clean_file_name)[1] if clean_file_name else '.tmp'
+        else:
+            suffix = os.path.splitext(file_name)[1] if file_name else '.tmp'
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=temp_dir) as tmp_file:
             tmp_path = tmp_file.name
