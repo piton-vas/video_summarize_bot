@@ -46,6 +46,7 @@ dp = Dispatcher()
 
 # Подключения к Redis
 redis_conn = None
+redis_conn_rq = None
 video_queue = None
 
 # Словарь для хранения состояний пользователей
@@ -53,15 +54,18 @@ user_states = {}
 
 async def init_redis():
     """Инициализация Redis подключений"""
-    global redis_conn, video_queue
+    global redis_conn, redis_conn_rq, video_queue
     
     try:
-        # Синхронное подключение для RQ и мониторинга
+        # Подключение для RQ (без decode_responses)
+        redis_conn_rq = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=False)
+        redis_conn_rq.ping()
+        
+        # Подключение для данных (с decode_responses)  
         redis_conn = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
-        redis_conn.ping()
         
         # Очередь для видео обработки
-        video_queue = Queue('video_processing', connection=redis_conn)
+        video_queue = Queue('video_processing', connection=redis_conn_rq)
         
         logger.info(f"Подключен к Redis: {REDIS_HOST}:{REDIS_PORT}")
         return True

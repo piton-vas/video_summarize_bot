@@ -21,7 +21,10 @@ REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
 REDIS_DB = int(os.getenv('REDIS_DB', 0))
 
-# Подключение к Redis
+# Подключение к Redis для RQ (без decode_responses)
+redis_conn_rq = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=False)
+
+# Подключение к Redis для данных (с decode_responses) 
 redis_conn = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
 
 class VideoProcessor:
@@ -119,17 +122,17 @@ def main():
     
     try:
         # Проверяем подключение к Redis
-        redis_conn.ping()
+        redis_conn_rq.ping()
         logger.info(f"Подключен к Redis: {REDIS_HOST}:{REDIS_PORT}")
     except Exception as e:
         logger.error(f"Ошибка подключения к Redis: {e}")
         return
     
     # Создаем очередь
-    queue = Queue('video_processing', connection=redis_conn)
+    queue = Queue('video_processing', connection=redis_conn_rq)
     
     # Создаем воркер
-    worker = Worker([queue], connection=redis_conn)
+    worker = Worker([queue], connection=redis_conn_rq)
     
     logger.info("Воркер готов к обработке задач...")
     
