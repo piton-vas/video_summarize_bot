@@ -107,7 +107,7 @@ class VideoProcessor:
         except Exception as e:
             logger.error(f"Ошибка сохранения результата задачи {task_id}: {e}")
 
-def process_video_sync(task_data):
+def process_video_sync(task_data, timeout=None):
     """
     Синхронная обертка для async функции (для RQ)
     """
