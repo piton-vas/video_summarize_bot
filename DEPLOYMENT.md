@@ -32,35 +32,20 @@ BOT_TOKEN=YOUR_BOT_TOKEN_HERE
 
 ## Автоматическая пересборка через GitHub Actions
 
-### Настройка Docker Hub
+### Настройка GitHub Container Registry
 
-1. Создайте аккаунт на [Docker Hub](https://hub.docker.com/)
-2. Создайте новый репозиторий (например: `your-username/video-summarize-bot`)
-3. Создайте Access Token:
-   - Перейдите в Account Settings → Security
-   - Нажмите "New Access Token"
-   - Сохраните токен
-
-### Настройка GitHub Secrets
-
-1. Откройте ваш репозиторий на GitHub
-2. Перейдите в Settings → Secrets and variables → Actions
-3. Добавьте следующие секреты:
-   - `DOCKERHUB_USERNAME` - ваш логин Docker Hub
-   - `DOCKERHUB_TOKEN` - токен доступа Docker Hub
+GitHub Container Registry (GHCR) автоматически настроен для вашего репозитория. Никаких дополнительных настроек не требуется.
 
 ### Обновление конфигурации
 
-1. Откройте файл `.github/workflows/docker-build.yml`
-2. Замените `your-dockerhub-username` на ваш реальный логин Docker Hub
-3. Откройте файл `docker-compose.prod.yml`
-4. Замените `your-dockerhub-username` на ваш реальный логин Docker Hub
+1. Откройте файл `docker-compose.prod-auto.yml`
+2. Замените `YOUR_GITHUB_USERNAME` на ваш реальный логин GitHub
 
 ### Как это работает
 
 После настройки, при каждом коммите в ветку `main`:
 1. GitHub Actions автоматически соберёт Docker образ
-2. Загрузит его в Docker Hub с тегом `latest`
+2. Загрузит его в GitHub Container Registry с тегом `latest`
 3. Образ будет доступен для развёртывания на любом сервере
 
 ## Развёртывание
@@ -80,7 +65,7 @@ cd video_summarize_bot
 docker-compose up -d
 ```
 
-### Способ 2: Продакшн (готовый образ из Docker Hub)
+### Способ 2: Продакшн (готовый образ из GitHub Container Registry)
 
 1. Создайте папку для проекта:
 ```bash
@@ -238,7 +223,7 @@ docker-compose logs -f --tail 50
 video_summarize_bot/
 ├── .github/
 │   └── workflows/
-│       └── docker-build.yml        # GitHub Actions для автосборки
+│       └── docker-build.yml        # GitHub Actions для GHCR
 ├── main.py                         # Основной код бота
 ├── requirements.txt                # Зависимости Python
 ├── Dockerfile                      # Docker образ
@@ -263,13 +248,13 @@ video_summarize_bot/
 3. Попробуйте пересобрать образ: `docker-compose build --no-cache`
 
 ### Проблемы с GitHub Actions
-1. Проверьте, что секреты `DOCKERHUB_USERNAME` и `DOCKERHUB_TOKEN` добавлены в GitHub
+1. Убедитесь, что у репозитория есть права на запись в packages
 2. Убедитесь, что имя образа в `.github/workflows/docker-build.yml` корректное
 3. Проверьте логи GitHub Actions во вкладке "Actions" репозитория
 
 ### Проблемы с автообновлением (Watchtower)
 1. Убедитесь, что Watchtower имеет доступ к Docker socket
-2. Проверьте, что образ в Docker Hub обновляется после коммитов
+2. Проверьте, что образ в GitHub Container Registry обновляется после коммитов
 3. Проверьте логи Watchtower: `docker logs watchtower`
 4. Убедитесь, что используется `docker-compose.prod-auto.yml` с Watchtower
 5. Проверьте, что контейнер имеет правильные labels для Watchtower
@@ -284,7 +269,7 @@ video_summarize_bot/
 - Никогда не публикуйте токен бота в открытом доступе
 - Используйте файл `.env` для хранения секретных данных
 - Добавьте `.env` в `.gitignore` если используете Git
-- Используйте GitHub Secrets для хранения токенов Docker Hub
+- GitHub Container Registry автоматически приватный для вашего репозитория
 - Регулярно обновляйте зависимости
 - Используйте непривилегированного пользователя в Docker контейнере
 
