@@ -763,8 +763,7 @@ async def media_handler(message: Message) -> None:
                 asyncio.create_task(monitor_task(task_id, user_id, status_message))
             else:
                 await status_message.edit_text("❌ Ошибка добавления задачи в очередь")
-                # Удаляем временный файл при ошибке
-                os.unlink(tmp_path)
+                # Примечание: Временные файлы остаются для возможной отладки
                 
     except Exception as e:
         logger.error(f"Ошибка обработки файла: {e}")
@@ -775,12 +774,7 @@ async def media_handler(message: Message) -> None:
         if user_id in user_states:
             user_states[user_id]['processing'] = False
         
-                # Очищаем временные файлы (для ZIP архивов)
-        try:
-            if 'extract_dir' in locals() and os.path.exists(extract_dir):
-                shutil.rmtree(extract_dir)
-        except Exception as e:
-            logger.error(f"Ошибка при очистке временных файлов: {e}")
+        # Примечание: Временные файлы будут очищены воркером после обработки
 
 
 @dp.message(lambda message: message.text and is_valid_url(message.text.strip()))
@@ -841,10 +835,7 @@ async def url_handler(message: Message) -> None:
             
             if result[0] is None:
                 await status_message.edit_text(f"❌ {result[1]}")
-                # Удаляем временные файлы
-                os.unlink(tmp_path)
-                if os.path.exists(extract_dir):
-                    shutil.rmtree(extract_dir)
+                # Примечание: Временные файлы остаются для возможной отладки
                 return
             
             # Получаем путь к медиа-файлу
@@ -868,8 +859,7 @@ async def url_handler(message: Message) -> None:
             asyncio.create_task(monitor_task(task_id, user_id, status_message))
         else:
             await status_message.edit_text("❌ Ошибка добавления задачи в очередь")
-            # Удаляем временный файл при ошибке
-            os.unlink(tmp_path)
+            # Примечание: Временные файлы остаются для возможной отладки
             
     except Exception as e:
         logger.error(f"Ошибка обработки URL: {e}")
@@ -880,12 +870,7 @@ async def url_handler(message: Message) -> None:
         if user_id in user_states:
             user_states[user_id]['processing'] = False
         
-        # Очищаем временные файлы (для ZIP архивов)
-        try:
-            if 'extract_dir' in locals() and os.path.exists(extract_dir):
-                shutil.rmtree(extract_dir)
-        except Exception as e:
-            logger.error(f"Ошибка при очистке временных файлов: {e}")
+        # Примечание: Временные файлы будут очищены воркером после обработки
 
 
 @dp.message()
