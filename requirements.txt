@@ -1,8 +1,0 @@
-aiogram==3.4.1
-aiohttp==3.9.1
-python-dotenv==1.0.0
-pydub==0.25.1
-openai-whisper==20231117
-ffmpeg-python==0.2.0
-redis==5.0.1
-rq==1.15.1 
