@@ -348,43 +348,10 @@ def extract_zip_and_find_media(zip_path, extract_dir):
         # Создаем директорию для извлечения
         os.makedirs(extract_dir, exist_ok=True)
         
-        # Сначала проверим, есть ли проблемы с кодировкой в именах файлов
-        has_encoding_issues = False
-        
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                for member in zip_ref.infolist():
-                    # Проверяем, есть ли проблемные символы в имени файла
-                    if any(ord(c) > 127 and ord(c) < 160 for c in member.filename):
-                        has_encoding_issues = True
-                        logger.warning(f"Обнаружены проблемы с кодировкой в файле: {member.filename}")
-                        break
-        except Exception as e:
-            logger.error(f"Ошибка при проверке кодировки архива: {e}")
-            has_encoding_issues = True
-        
-        # Если есть проблемы с кодировкой, сразу используем альтернативный способ
-        if has_encoding_issues:
-            logger.info("Обнаружены проблемы с кодировкой, используем альтернативный способ извлечения")
-            return extract_zip_alternative(zip_path, extract_dir, allowed_extensions)
-        
-        # Стандартный способ извлечения
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                # Проверяем размер распакованных файлов (защита от zip-bomb)
-                total_size = 0
-                for file_info in zip_ref.infolist():
-                    total_size += file_info.file_size
-                    if total_size > 1024 * 1024 * 1024:  # 1 ГБ лимит
-                        return None, "Архив слишком большой после распаковки (больше 1 ГБ)"
-                
-                # Распаковываем архив
-                zip_ref.extractall(extract_dir)
-                
-        except Exception as e:
-            logger.error(f"Ошибка стандартного извлечения: {e}")
-            # Пробуем альтернативный способ
-            return extract_zip_alternative(zip_path, extract_dir, allowed_extensions)
+        # Всегда используем альтернативный способ извлечения для ZIP архивов
+        # Это гарантирует безопасные имена файлов независимо от кодировки
+        logger.info("Используем альтернативный способ извлечения для ZIP архива")
+        return extract_zip_alternative(zip_path, extract_dir, allowed_extensions)
             
         # Ищем медиа-файлы
         for root, dirs, files in os.walk(extract_dir):
@@ -432,6 +399,13 @@ def extract_zip_alternative(zip_path, extract_dir, allowed_extensions):
         
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             logger.info(f"Альтернативное извлечение: найдено {len(zip_ref.infolist())} файлов в архиве")
+            
+            # Проверяем размер распакованных файлов (защита от zip-bomb)
+            total_size = 0
+            for file_info in zip_ref.infolist():
+                total_size += file_info.file_size
+                if total_size > 1024 * 1024 * 1024:  # 1 ГБ лимит
+                    return None, "Архив слишком большой после распаковки (больше 1 ГБ)"
             
             for i, member in enumerate(zip_ref.infolist()):
                 if member.is_dir():
