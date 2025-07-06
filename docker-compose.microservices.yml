@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  # Redis для очередей задач
+  redis:
+    image: redis:7-alpine
+    container_name: video_bot_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - bot-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: redis-server --appendonly yes
+
+  # Основной Telegram бот
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: video_summarize_bot
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - ADMIN_USER_ID=${ADMIN_USER_ID}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - shared_temp:/tmp/shared
+    networks:
+      - bot-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Воркер для обработки видео
+  video-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: video_worker
+    restart: unless-stopped
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    volumes:
+      - ./logs:/app/logs
+      - shared_temp:/tmp/shared
+    networks:
+      - bot-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    scale: 2  # Запускаем 2 воркера для параллельной обработки
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Мониторинг Redis (опционально)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis_commander
+    restart: unless-stopped
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    networks:
+      - bot-network
+    depends_on:
+      - redis
+    profiles:
+      - monitoring
+
+  # Автоматическое обновление контейнеров
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    environment:
+      - WATCHTOWER_NOTIFICATIONS_LEVEL=info
+      - WATCHTOWER_REGISTRY_USERNAME=${REPO_USER}
+      - WATCHTOWER_REGISTRY_PASSWORD=${REPO_PASS}
+      - WATCHTOWER_REGISTRY_URL=https://ghcr.io
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_REVIVE_STOPPED=false
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.docker:/root/.docker:ro
+    command: >
+      --interval 60
+      --cleanup
+      --label-enable
+      --debug
+      --registry-credentials
+    restart: unless-stopped
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+    driver: local
+  shared_temp:
+    driver: local 

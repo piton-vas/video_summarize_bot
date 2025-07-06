@@ -2,13 +2,17 @@ import asyncio
 import logging
 import os
 import tempfile
+import json
+import uuid
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
-from decryptor import decrypt_process
+import aioredis
+from rq import Queue
+import redis
 
 # Настройка логирования
 logging.basicConfig(
@@ -31,12 +35,150 @@ if ADMIN_USER_ID:
 else:
     logger.warning("ADMIN_USER_ID не найден в переменных окружения!")
 
+# Настройки Redis
+REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
+REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+REDIS_DB = int(os.getenv('REDIS_DB', 0))
+
 # Создаём объекты бота и диспетчера
 bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 
+# Подключения к Redis
+redis_conn = None
+redis_async = None
+video_queue = None
+
 # Словарь для хранения состояний пользователей
 user_states = {}
+
+async def init_redis():
+    """Инициализация Redis подключений"""
+    global redis_conn, redis_async, video_queue
+    
+    try:
+        # Синхронное подключение для RQ
+        redis_conn = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
+        redis_conn.ping()
+        
+        # Асинхронное подключение для мониторинга
+        redis_async = await aioredis.create_redis_pool(f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}')
+        
+        # Очередь для видео обработки
+        video_queue = Queue('video_processing', connection=redis_conn)
+        
+        logger.info(f"Подключен к Redis: {REDIS_HOST}:{REDIS_PORT}")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка подключения к Redis: {e}")
+        return False
+
+async def add_video_task(user_id, file_path, task_id):
+    """Добавляет задачу обработки видео в очередь"""
+    try:
+        task_data = {
+            'task_id': task_id,
+            'user_id': user_id,
+            'file_path': file_path,
+            'created_at': datetime.now().isoformat()
+        }
+        
+        # Добавляем задачу в очередь
+        from worker import process_video_sync
+        job = video_queue.enqueue(process_video_sync, task_data, timeout=1800)  # 30 минут
+        
+        logger.info(f"Задача {task_id} добавлена в очередь для пользователя {user_id}")
+        return job
+    except Exception as e:
+        logger.error(f"Ошибка добавления задачи в очередь: {e}")
+        return None
+
+async def get_task_status(task_id):
+    """Получает статус задачи из Redis"""
+    try:
+        task_key = f"task:{task_id}"
+        task_data = await redis_async.hgetall(task_key)
+        
+        if task_data:
+            return {
+                'status': task_data.get(b'status', b'unknown').decode(),
+                'message': task_data.get(b'message', b'').decode(),
+                'result': task_data.get(b'result', b'').decode(),
+                'updated_at': task_data.get(b'updated_at', b'').decode()
+            }
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка получения статуса задачи {task_id}: {e}")
+        return None
+
+async def monitor_task(task_id, user_id, status_message):
+    """Мониторит выполнение задачи и обновляет статус"""
+    try:
+        last_status = ""
+        
+        while True:
+            task_status = await get_task_status(task_id)
+            
+            if not task_status:
+                await asyncio.sleep(5)
+                continue
+            
+            current_status = task_status['status']
+            current_message = task_status['message']
+            
+            # Обновляем статус только если он изменился
+            if current_message != last_status:
+                try:
+                    await status_message.edit_text(f"🔄 {current_message}")
+                    last_status = current_message
+                except Exception as e:
+                    logger.error(f"Ошибка обновления статуса: {e}")
+            
+            # Проверяем завершение задачи
+            if current_status == 'completed':
+                # Задача завершена успешно
+                result_data = json.loads(task_status['result'])
+                await handle_task_completion(user_id, result_data, status_message)
+                break
+            elif current_status == 'failed':
+                # Задача завершена с ошибкой
+                await status_message.edit_text(f"❌ {current_message}")
+                break
+            
+            await asyncio.sleep(3)  # Проверяем каждые 3 секунды
+            
+    except Exception as e:
+        logger.error(f"Ошибка мониторинга задачи {task_id}: {e}")
+        await status_message.edit_text("❌ Произошла ошибка при мониторинге задачи")
+
+async def handle_task_completion(user_id, result_data, status_message):
+    """Обрабатывает завершение задачи"""
+    try:
+        # Отправляем результат
+        response_text = (
+            f"✅ <b>Обработка завершена!</b>\n\n"
+            f"📝 <b>Краткое содержание:</b>\n"
+            f"{result_data['summary']}\n\n"
+            f"📜 <b>Полная расшифровка:</b>\n"
+            f"{result_data['transcript'][:1000]}{'...' if len(result_data['transcript']) > 1000 else ''}"
+        )
+        
+        await status_message.edit_text(response_text)
+        
+        # Отправляем файл с полными результатами
+        if 'output_file' in result_data and os.path.exists(result_data['output_file']):
+            with open(result_data['output_file'], 'rb') as f:
+                await bot.send_document(
+                    chat_id=user_id,
+                    document=types.BufferedInputFile(f.read(), filename=os.path.basename(result_data['output_file'])),
+                    caption="📄 Полная расшифровка с таймкодами"
+                )
+            # Удаляем временный файл результата
+            os.unlink(result_data['output_file'])
+            
+    except Exception as e:
+        logger.error(f"Ошибка обработки завершения задачи: {e}")
+        await status_message.edit_text("❌ Ошибка при отправке результатов")
 
 
 @dp.message(CommandStart())
@@ -50,7 +192,8 @@ async def command_start_handler(message: Message) -> None:
         f"<b>Доступные команды:</b>\n"
         f"• /start - показать это сообщение\n"
         f"• /ping - проверить работу бота\n"
-        f"• /help - подробная справка\n\n"
+        f"• /help - подробная справка\n"
+        f"• /status - статус системы\n\n"
         f"<b>Как использовать:</b>\n"
         f"Просто отправьте мне видео или аудио файл, и я создам его расшифровку с кратким содержанием!"
     )
@@ -65,6 +208,34 @@ async def ping_handler(message: Message) -> None:
     await message.answer(f"pong _ (Твой ID: {user_id})")
 
 
+@dp.message(Command('status'))
+async def status_handler(message: Message) -> None:
+    """
+    Обработчик команды /status
+    """
+    try:
+        # Проверяем подключение к Redis
+        redis_conn.ping()
+        queue_length = len(video_queue)
+        
+        status_text = (
+            f"🟢 <b>Статус системы</b>\n\n"
+            f"• Redis: подключен\n"
+            f"• Очередь обработки: {queue_length} задач\n"
+            f"• Воркеры: активны\n"
+            f"• Система: работает нормально"
+        )
+    except Exception as e:
+        status_text = (
+            f"🔴 <b>Статус системы</b>\n\n"
+            f"• Ошибка подключения к Redis\n"
+            f"• Система: недоступна\n"
+            f"• Детали: {str(e)}"
+        )
+    
+    await message.answer(status_text)
+
+
 @dp.message(Command('help'))
 async def help_handler(message: Message) -> None:
     """
@@ -77,13 +248,18 @@ async def help_handler(message: Message) -> None:
         "• Аудио: MP3, WAV, M4A, OGG, FLAC\n\n"
         "<b>Что делает бот:</b>\n"
         "1. Принимает ваш файл\n"
-        "2. Конвертирует его в аудио\n"
-        "3. Создает расшифровку с помощью AI\n"
-        "4. Делает краткое содержание\n"
-        "5. Отправляет результат с таймкодами\n\n"
+        "2. Ставит задачу в очередь обработки\n"
+        "3. Воркеры обрабатывают файл в фоне\n"
+        "4. Создает расшифровку с помощью AI\n"
+        "5. Делает краткое содержание\n"
+        "6. Отправляет результат с таймкодами\n\n"
         "<b>Ограничения:</b>\n"
         "• Максимальный размер файла: 20 МБ\n"
         "• Максимальная длительность: 10 минут\n\n"
+        "<b>Преимущества новой архитектуры:</b>\n"
+        "• Высокая производительность\n"
+        "• Масштабируемость\n"
+        "• Отказоустойчивость\n\n"
         "<b>Просто отправьте файл и ждите результат!</b>"
     )
 
@@ -140,62 +316,43 @@ async def media_handler(message: Message) -> None:
     # Отправляем сообщение о начале обработки
     status_message = await message.answer("📥 Загружаю файл...")
     
-    async def update_status(status_text):
-        try:
-            await status_message.edit_text(f"🔄 {status_text}")
-        except Exception as e:
-            logger.error(f"Ошибка обновления статуса: {e}")
-    
     try:
         # Получаем файл
         file = await bot.get_file(file_info.file_id)
         
-        # Создаем временный файл
+        # Создаем временный файл в shared volume
+        temp_dir = '/tmp/shared' if os.path.exists('/tmp/shared') else '/tmp'
         suffix = os.path.splitext(file_name)[1] if file_name else '.tmp'
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=temp_dir) as tmp_file:
             tmp_path = tmp_file.name
             
             # Скачиваем файл
-            await update_status("Скачиваю файл...")
+            await status_message.edit_text("📥 Скачиваю файл...")
             await bot.download_file(file.file_path, tmp_path)
             
-            # Обрабатываем файл
-            await update_status("Начинаю обработку...")
-            result = await decrypt_process(tmp_path, update_status)
+            # Генерируем уникальный ID задачи
+            task_id = str(uuid.uuid4())
             
-            if result:
-                # Отправляем результат
-                response_text = (
-                    f"✅ <b>Обработка завершена!</b>\n\n"
-                    f"📝 <b>Краткое содержание:</b>\n"
-                    f"{result['summary']}\n\n"
-                    f"📜 <b>Полная расшифровка:</b>\n"
-                    f"{result['transcript'][:1000]}{'...' if len(result['transcript']) > 1000 else ''}"
-                )
+            # Добавляем задачу в очередь
+            await status_message.edit_text("📋 Добавляю в очередь обработки...")
+            job = await add_video_task(user_id, tmp_path, task_id)
+            
+            if job:
+                await status_message.edit_text("⏳ Задача добавлена в очередь. Ожидание обработки...")
                 
-                await status_message.edit_text(response_text)
-                
-                # Отправляем файл с полными результатами
-                if os.path.exists(result['output_file']):
-                    with open(result['output_file'], 'rb') as f:
-                        await message.answer_document(
-                            types.BufferedInputFile(f.read(), filename=os.path.basename(result['output_file'])),
-                            caption="📄 Полная расшифровка с таймкодами"
-                        )
-                    # Удаляем временный файл результата
-                    os.unlink(result['output_file'])
+                # Запускаем мониторинг задачи
+                asyncio.create_task(monitor_task(task_id, user_id, status_message))
             else:
-                await status_message.edit_text("❌ Произошла ошибка при обработке файла.")
+                await status_message.edit_text("❌ Ошибка добавления задачи в очередь")
+                # Удаляем временный файл при ошибке
+                os.unlink(tmp_path)
                 
     except Exception as e:
         logger.error(f"Ошибка обработки файла: {e}")
         await status_message.edit_text(f"❌ Произошла ошибка: {str(e)}")
     
     finally:
-        # Удаляем временный файл
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-        
         # Сбрасываем состояние обработки
         if user_id in user_states:
             user_states[user_id]['processing'] = False
@@ -222,12 +379,16 @@ async def send_startup_notification() -> None:
     if ADMIN_USER_ID:
         try:
             startup_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            queue_length = len(video_queue) if video_queue else 0
+            
             await bot.send_message(
                 chat_id=ADMIN_USER_ID,
                 text="🚀 <b>Бот запущен!</b>\n\n"
                      f"⏰ Время запуска: {startup_time}\n"
-                     f"📦 Версия: latest\n"
-                     f"🆔 ID бота: {bot.id if hasattr(bot, 'id') else 'Unknown'}"
+                     f"📦 Версия: microservices\n"
+                     f"🆔 ID бота: {bot.id if hasattr(bot, 'id') else 'Unknown'}\n"
+                     f"📋 Очередь обработки: {queue_length} задач\n"
+                     f"🔧 Архитектура: Redis + Workers"
             )
             logger.info("Уведомление о запуске отправлено администратору")
         except Exception as e:
@@ -239,6 +400,11 @@ async def main() -> None:
     Основная функция для запуска бота
     """
     logger.info("Запуск бота...")
+    
+    # Инициализируем Redis
+    if not await init_redis():
+        logger.error("Не удалось подключиться к Redis. Завершение работы.")
+        return
     
     # Удаляем старые апдейты
     await bot.delete_webhook(drop_pending_updates=True)

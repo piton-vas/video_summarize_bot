@@ -1,6 +1,12 @@
 # Используем официальный образ Python
 FROM python:3.11-slim
 
+# Устанавливаем системные зависимости для обработки аудио/видео
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
@@ -11,18 +17,19 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Копируем исходный код
-COPY main.py .
+COPY worker.py .
+COPY decryptor.py .
 
 # Создаём папку для временных файлов
 RUN mkdir -p /tmp/shared
 
 # Создаём непривилегированного пользователя
-RUN useradd --create-home --shell /bin/bash bot_user && \
-    chown -R bot_user:bot_user /app && \
-    chown -R bot_user:bot_user /tmp/shared
+RUN useradd --create-home --shell /bin/bash worker_user && \
+    chown -R worker_user:worker_user /app && \
+    chown -R worker_user:worker_user /tmp/shared
 
 # Переключаемся на непривилегированного пользователя
-USER bot_user
+USER worker_user
 
-# Запускаем бота
-CMD ["python", "main.py"] 
+# Запускаем воркер
+CMD ["python", "worker.py"] 
