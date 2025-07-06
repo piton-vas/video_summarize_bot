@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  telegram-bot:
+    image: your-dockerhub-username/video-summarize-bot:latest
+    container_name: video_summarize_bot
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - bot-network
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 300 --cleanup --label-enable
+    restart: unless-stopped
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
+
+volumes:
+  bot-logs: 
