@@ -4,6 +4,8 @@ import os
 import tempfile
 import json
 import uuid
+import re
+import aiohttp
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
@@ -188,6 +190,72 @@ async def handle_task_completion(user_id, result_data, status_message):
         await status_message.edit_text("❌ Ошибка при отправке результатов")
 
 
+async def download_file_from_url(url, max_size=500*1024*1024):
+    """Скачивает файл по URL с проверкой размера"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.head(url) as response:
+                if response.status != 200:
+                    return None, f"Не удалось получить файл (код {response.status})"
+                
+                # Проверяем размер файла
+                content_length = response.headers.get('content-length')
+                if content_length and int(content_length) > max_size:
+                    size_mb = int(content_length) / (1024 * 1024)
+                    return None, f"Файл слишком большой ({size_mb:.1f} МБ). Максимум: {max_size/(1024*1024):.0f} МБ"
+                
+                # Получаем имя файла из заголовков или URL
+                file_name = None
+                content_disposition = response.headers.get('content-disposition')
+                if content_disposition:
+                    # Пытаемся извлечь filename из content-disposition
+                    filename_match = re.search(r'filename[*]?=([^;]+)', content_disposition)
+                    if filename_match:
+                        file_name = filename_match.group(1).strip('"\'')
+                
+                if not file_name:
+                    # Получаем имя файла из URL
+                    file_name = os.path.basename(url.split('?')[0])
+                
+                if not file_name or '.' not in file_name:
+                    file_name = 'downloaded_file'
+            
+            # Скачиваем файл
+            temp_dir = '/tmp/shared' if os.path.exists('/tmp/shared') else '/tmp'
+            with tempfile.NamedTemporaryFile(delete=False, dir=temp_dir) as tmp_file:
+                tmp_path = tmp_file.name
+                
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        return None, f"Не удалось скачать файл (код {response.status})"
+                    
+                    downloaded_size = 0
+                    async for chunk in response.content.iter_chunked(8192):
+                        downloaded_size += len(chunk)
+                        if downloaded_size > max_size:
+                            os.unlink(tmp_path)
+                            return None, f"Файл слишком большой (больше {max_size/(1024*1024):.0f} МБ)"
+                        tmp_file.write(chunk)
+                
+                return tmp_path, file_name
+                
+    except Exception as e:
+        logger.error(f"Ошибка скачивания файла по URL: {e}")
+        return None, f"Ошибка скачивания: {str(e)}"
+
+
+def is_valid_url(url):
+    """Проверяет, является ли строка валидным URL"""
+    url_pattern = re.compile(
+        r'^https?://'  # http:// or https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
+        r'localhost|'  # localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+        r'(?::\d+)?'  # optional port
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    return url_pattern.match(url) is not None
+
+
 @dp.message(CommandStart())
 async def command_start_handler(message: Message) -> None:
     """
@@ -202,7 +270,9 @@ async def command_start_handler(message: Message) -> None:
         f"• /help - подробная справка\n"
         f"• /status - статус системы\n\n"
         f"<b>Как использовать:</b>\n"
-        f"Просто отправьте мне видео или аудио файл, и я создам его расшифровку с кратким содержанием!"
+        f"Отправьте мне видео/аудио файл или прямую ссылку на файл, и я создам расшифровку с кратким содержанием!\n\n"
+        f"📎 Файлы до 20 МБ - прикрепите напрямую\n"
+        f"🔗 Файлы до 500 МБ - отправьте ссылку"
     )
 
 
@@ -260,20 +330,20 @@ async def help_handler(message: Message) -> None:
         "<b>Поддерживаемые форматы:</b>\n"
         "• Видео: MP4, AVI, MOV, MKV, WMV, WEBM\n"
         "• Аудио: MP3, WAV, M4A, OGG, FLAC\n\n"
+        "<b>Способы отправки файлов:</b>\n"
+        "1. 📎 Прикрепить файл напрямую (до 20 МБ)\n"
+        "2. 🔗 Отправить прямую ссылку на файл (до 500 МБ)\n\n"
         "<b>Что делает бот:</b>\n"
-        "1. Принимает ваш файл\n"
+        "1. Принимает ваш файл или ссылку\n"
         "2. Ставит задачу в очередь обработки\n"
         "3. Воркеры обрабатывают файл в фоне\n"
         "4. Создает расшифровку с помощью AI\n"
         "5. Делает краткое содержание\n"
         "6. Отправляет результат с таймкодами\n\n"
         "<b>Ограничения:</b>\n"
-        "• Максимальный размер файла: 500 МБ\n"
+        "• Файлы через Telegram: до 20 МБ\n"
+        "• Файлы по ссылке: до 500 МБ\n"
         "• Максимальная длительность: 10 минут\n\n"
-        "<b>⚠️ Важно для больших файлов:</b>\n"
-        "• Файлы до 50 МБ можно отправлять как видео/аудио\n"
-        "• Файлы больше 50 МБ отправляйте как <b>документы</b> (через скрепку 📎)\n"
-        "• Это ограничение Telegram Bot API\n\n"
         "<b>Преимущества новой архитектуры:</b>\n"
         "• Высокая производительность\n"
         "• Масштабируемость\n"
@@ -326,20 +396,12 @@ async def media_handler(message: Message) -> None:
         await message.answer("❌ Не удалось получить информацию о файле.")
         return
     
-    # Проверяем размер файла (500 МБ лимит)
-    if file_info.file_size > 500 * 1024 * 1024:
-        await message.answer("❌ Файл слишком большой. Максимальный размер: 500 МБ.")
+    # Проверяем размер файла (20 МБ лимит - ограничение Telegram Bot API)
+    if file_info.file_size > 20 * 1024 * 1024:
+        await message.answer("❌ Файл слишком большой. Максимальный размер: 20 МБ.\n\nЭто ограничение Telegram Bot API для скачивания файлов.")
         return
     
-    # Проверяем ограничения Telegram Bot API
-    if message.content_type in ['video', 'audio'] and file_info.file_size > 50 * 1024 * 1024:
-        await message.answer(
-            "⚠️ Файл превышает лимит Telegram для видео/аудио (50 МБ).\n\n"
-            "📎 Пожалуйста, отправьте файл как <b>документ</b> (прикрепите через скрепку), "
-            "а не как видео/аудио сообщение.\n\n"
-            "Максимальный размер для документов: 500 МБ"
-        )
-        return
+
     
     # Устанавливаем состояние обработки
     user_states[user_id] = {'processing': True}
@@ -354,7 +416,7 @@ async def media_handler(message: Message) -> None:
         # Создаем временный файл в shared volume
         temp_dir = '/tmp/shared' if os.path.exists('/tmp/shared') else '/tmp'
         # Для документов используем очищенное имя файла для получения правильного расширения
-        if message.content_type == 'document':
+        if message.content_type == 'document' and file_name:
             clean_file_name = file_name.rstrip('_')
             suffix = os.path.splitext(clean_file_name)[1] if clean_file_name else '.tmp'
         else:
@@ -394,16 +456,88 @@ async def media_handler(message: Message) -> None:
             user_states[user_id]['processing'] = False
 
 
+@dp.message(lambda message: message.text and is_valid_url(message.text.strip()))
+async def url_handler(message: Message) -> None:
+    """
+    Обработчик URL-ссылок для скачивания файлов
+    """
+    user_id = message.from_user.id
+    url = message.text.strip()
+    
+    # Проверяем, не обрабатывается ли уже файл от этого пользователя
+    if user_id in user_states and user_states[user_id].get('processing'):
+        await message.answer("⏳ Пожалуйста, подождите. Ваш предыдущий файл еще обрабатывается.")
+        return
+    
+    # Устанавливаем состояние обработки
+    user_states[user_id] = {'processing': True}
+    
+    # Отправляем сообщение о начале обработки
+    status_message = await message.answer("🔗 Анализирую ссылку...")
+    
+    try:
+        # Скачиваем файл по URL
+        await status_message.edit_text("📥 Скачиваю файл...")
+        tmp_path, file_name = await download_file_from_url(url)
+        
+        if not tmp_path:
+            await status_message.edit_text(f"❌ {file_name}")
+            return
+        
+        # Отбрасываем последние символы подчеркивания из имени файла
+        clean_file_name = file_name.rstrip('_')
+        
+        # Проверяем расширение файла
+        allowed_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.webm', '.mp3', '.wav', '.m4a', '.ogg', '.flac']
+        if not any(clean_file_name.lower().endswith(ext) for ext in allowed_extensions):
+            await status_message.edit_text(
+                "❌ Неподдерживаемый формат файла.\n\n"
+                "Поддерживаемые форматы:\n"
+                "• Видео: MP4, AVI, MOV, MKV, WMV, WEBM\n"
+                "• Аудио: MP3, WAV, M4A, OGG, FLAC"
+            )
+            # Удаляем временный файл
+            os.unlink(tmp_path)
+            return
+        
+        # Генерируем уникальный ID задачи
+        task_id = str(uuid.uuid4())
+        
+        # Добавляем задачу в очередь
+        await status_message.edit_text("📋 Добавляю в очередь обработки...")
+        job = await add_video_task(user_id, tmp_path, task_id)
+        
+        if job:
+            await status_message.edit_text("⏳ Задача добавлена в очередь. Ожидание обработки...")
+            
+            # Запускаем мониторинг задачи
+            asyncio.create_task(monitor_task(task_id, user_id, status_message))
+        else:
+            await status_message.edit_text("❌ Ошибка добавления задачи в очередь")
+            # Удаляем временный файл при ошибке
+            os.unlink(tmp_path)
+            
+    except Exception as e:
+        logger.error(f"Ошибка обработки URL: {e}")
+        await status_message.edit_text(f"❌ Произошла ошибка: {str(e)}")
+    
+    finally:
+        # Сбрасываем состояние обработки
+        if user_id in user_states:
+            user_states[user_id]['processing'] = False
+
+
 @dp.message()
 async def echo_handler(message: Message) -> None:
     """
     Обработчик всех остальных сообщений
     """
     await message.answer(
-        "🤖 Я умею обрабатывать только видео и аудио файлы.\n\n"
+        "🤖 Я умею обрабатывать видео и аудио файлы.\n\n"
         "Отправьте мне:\n"
         "• Видео файл (MP4, AVI, MOV, MKV, WMV, WEBM)\n"
-        "• Аудио файл (MP3, WAV, M4A, OGG, FLAC)\n\n"
+        "• Аудио файл (MP3, WAV, M4A, OGG, FLAC)\n"
+        "• Прямую ссылку на файл (до 500 МБ)\n\n"
         "Или используйте команду /help для подробной справки."
     )
 
