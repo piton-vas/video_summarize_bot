@@ -75,7 +75,7 @@ cd video_summarize_bot
 
 2. Скачайте продакшн конфигурацию:
 ```bash
-curl -o docker-compose.yml https://raw.githubusercontent.com/your-username/video_summarize_bot/main/docker-compose.prod.yml
+curl -o docker-compose.yml https://raw.githubusercontent.com/piton-vas/video_summarize_bot/main/docker-compose.prod.yml
 ```
 
 3. Создайте файл `.env` с токеном бота (см. выше)
@@ -166,7 +166,7 @@ docker logs -f video_summarize_bot
 
 ```bash
 # Скачайте конфигурацию с Watchtower
-curl -o docker-compose.yml https://raw.githubusercontent.com/your-username/video_summarize_bot/main/docker-compose.prod-auto.yml
+curl -o docker-compose.yml https://raw.githubusercontent.com/piton-vas/video_summarize_bot/main/docker-compose.prod-auto.yml
 
 # Запустите бота с автообновлением
 docker-compose up -d
