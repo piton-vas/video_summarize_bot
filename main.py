@@ -49,7 +49,7 @@ async def ping_handler(message: Message) -> None:
     Обработчик команды /ping
     """
     user_id = message.from_user.id
-    await message.answer(f"pong  (Твой ID: {user_id})")
+    await message.answer(f"pong _ (Твой ID: {user_id})")
 
 
 @dp.message()
