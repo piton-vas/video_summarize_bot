@@ -21,7 +21,7 @@ services:
     container_name: watchtower
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: --interval 300 --cleanup --label-enable
+    command: --interval 60 --cleanup --label-enable
     restart: unless-stopped
     networks:
       - bot-network
