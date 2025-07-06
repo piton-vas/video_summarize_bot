@@ -20,10 +20,12 @@ services:
     image: containrrr/watchtower
     container_name: watchtower
     environment:
+      - WATCHTOWER_NOTIFICATIONS_LEVEL=info
       - REPO_USER=${REPO_USER}
       - REPO_PASS=${REPO_PASS}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.docker/config.json:/config.json:ro
     command: --interval 60 --cleanup --label-enable
     restart: unless-stopped
     networks:
