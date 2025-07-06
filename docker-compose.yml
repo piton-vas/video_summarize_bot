@@ -1,4 +1,5 @@
-version: '3.8'
+# Используем современный синтаксис без версии
+# version устарела в Docker Compose v2+
 
 services:
   # Redis для очередей задач

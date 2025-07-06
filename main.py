@@ -71,6 +71,10 @@ async def init_redis():
 async def add_video_task(user_id, file_path, task_id):
     """Добавляет задачу обработки видео в очередь"""
     try:
+        if not video_queue:
+            logger.error("Redis очередь не инициализирована")
+            return None
+            
         task_data = {
             'task_id': task_id,
             'user_id': user_id,
@@ -91,6 +95,10 @@ async def add_video_task(user_id, file_path, task_id):
 def get_task_status(task_id):
     """Получает статус задачи из Redis"""
     try:
+        if not redis_conn:
+            logger.error("Redis подключение не инициализировано")
+            return None
+            
         task_key = f"task:{task_id}"
         task_data = redis_conn.hgetall(task_key)
         
@@ -209,17 +217,24 @@ async def status_handler(message: Message) -> None:
     Обработчик команды /status
     """
     try:
-        # Проверяем подключение к Redis
-        redis_conn.ping()
-        queue_length = len(video_queue)
-        
-        status_text = (
-            f"🟢 <b>Статус системы</b>\n\n"
-            f"• Redis: подключен\n"
-            f"• Очередь обработки: {queue_length} задач\n"
-            f"• Воркеры: активны\n"
-            f"• Система: работает нормально"
-        )
+        if not redis_conn or not video_queue:
+            status_text = (
+                f"🔴 <b>Статус системы</b>\n\n"
+                f"• Redis: не инициализирован\n"
+                f"• Система: недоступна"
+            )
+        else:
+            # Проверяем подключение к Redis
+            redis_conn.ping()
+            queue_length = len(video_queue)
+            
+            status_text = (
+                f"🟢 <b>Статус системы</b>\n\n"
+                f"• Redis: подключен\n"
+                f"• Очередь обработки: {queue_length} задач\n"
+                f"• Воркеры: активны\n"
+                f"• Система: работает нормально"
+            )
     except Exception as e:
         status_text = (
             f"🔴 <b>Статус системы</b>\n\n"
