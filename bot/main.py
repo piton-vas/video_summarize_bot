@@ -348,30 +348,71 @@ def extract_zip_and_find_media(zip_path, extract_dir):
         # Создаем директорию для извлечения
         os.makedirs(extract_dir, exist_ok=True)
         
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            # Проверяем размер распакованных файлов (защита от zip-bomb)
-            total_size = 0
-            for file_info in zip_ref.infolist():
-                total_size += file_info.file_size
-                if total_size > 1024 * 1024 * 1024:  # 1 ГБ лимит
-                    return None, "Архив слишком большой после распаковки (больше 1 ГБ)"
+        # Пробуем разные кодировки для ZIP файлов
+        encodings_to_try = ['utf-8', 'cp1251', 'cp866', 'latin1']
+        
+        for encoding in encodings_to_try:
+            try:
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    # Проверяем размер распакованных файлов (защита от zip-bomb)
+                    total_size = 0
+                    for file_info in zip_ref.infolist():
+                        total_size += file_info.file_size
+                        if total_size > 1024 * 1024 * 1024:  # 1 ГБ лимит
+                            return None, "Архив слишком большой после распаковки (больше 1 ГБ)"
+                    
+                    # Распаковываем архив с обработкой кодировки
+                    for member in zip_ref.infolist():
+                        # Пытаемся исправить кодировку имени файла
+                        try:
+                            if encoding != 'utf-8':
+                                # Декодируем имя файла с правильной кодировкой
+                                original_filename = member.filename.encode('latin1').decode(encoding)
+                                member.filename = original_filename
+                        except (UnicodeDecodeError, UnicodeEncodeError):
+                            # Если не получается, оставляем как есть
+                            pass
+                        
+                        # Извлекаем файл
+                        zip_ref.extract(member, extract_dir)
+                    
+                    break  # Если успешно, выходим из цикла
+                    
+            except (UnicodeDecodeError, zipfile.BadZipFile) as e:
+                if encoding == encodings_to_try[-1]:  # Последняя попытка
+                    logger.error(f"Не удалось распаковать архив с кодировкой {encoding}: {e}")
+                    continue
+                else:
+                    continue  # Пробуем следующую кодировку
             
-            # Распаковываем архив
-            zip_ref.extractall(extract_dir)
-            
-            # Ищем медиа-файлы
-            for root, dirs, files in os.walk(extract_dir):
-                for file in files:
+        # Ищем медиа-файлы
+        for root, dirs, files in os.walk(extract_dir):
+            for file in files:
+                try:
                     file_path = os.path.join(root, file)
+                    
+                    # Проверяем, что файл действительно существует
+                    if not os.path.exists(file_path):
+                        logger.warning(f"Файл не найден при поиске: {file_path}")
+                        continue
+                    
                     # Отбрасываем символы подчеркивания и проверяем расширение
                     clean_name = file.rstrip('_')
                     if any(clean_name.lower().endswith(ext) for ext in allowed_extensions):
                         # Проверяем размер файла
                         if os.path.getsize(file_path) <= 500 * 1024 * 1024:  # 500 МБ лимит
                             media_files.append((file_path, clean_name))
+                            logger.info(f"Найден медиа-файл: {file_path}")
+                        else:
+                            logger.warning(f"Файл слишком большой: {file_path}")
+                except Exception as e:
+                    logger.error(f"Ошибка при обработке файла {file}: {e}")
+                    continue
         
         if not media_files:
-            return None, "В архиве не найдено медиа-файлов поддерживаемых форматов"
+            # Если не найдено файлов, попробуем альтернативный способ с переименованием
+            logger.info("Медиа-файлы не найдены, пробуем альтернативный способ...")
+            return extract_zip_alternative(zip_path, extract_dir, allowed_extensions)
         
         # Если несколько файлов, выбираем первый
         if len(media_files) > 1:
@@ -381,6 +422,47 @@ def extract_zip_and_find_media(zip_path, extract_dir):
             
     except Exception as e:
         return None, f"Ошибка при распаковке архива: {str(e)}"
+
+
+def extract_zip_alternative(zip_path, extract_dir, allowed_extensions):
+    """Альтернативный способ извлечения ZIP с переименованием файлов"""
+    try:
+        media_files = []
+        
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            for i, member in enumerate(zip_ref.infolist()):
+                if member.is_dir():
+                    continue
+                
+                # Создаем безопасное имя файла
+                original_name = member.filename
+                file_ext = ""
+                
+                # Пытаемся определить расширение из оригинального имени
+                if '.' in original_name:
+                    file_ext = '.' + original_name.split('.')[-1].lower()
+                
+                # Создаем безопасное имя
+                safe_name = f"extracted_file_{i}{file_ext}"
+                safe_path = os.path.join(extract_dir, safe_name)
+                
+                # Извлекаем файл с безопасным именем
+                with zip_ref.open(member) as source, open(safe_path, 'wb') as target:
+                    target.write(source.read())
+                
+                # Проверяем, является ли файл медиа
+                if any(safe_name.lower().endswith(ext) for ext in allowed_extensions):
+                    if os.path.getsize(safe_path) <= 500 * 1024 * 1024:
+                        media_files.append((safe_path, safe_name))
+                        logger.info(f"Найден медиа-файл (переименован): {safe_path}")
+        
+        if not media_files:
+            return None, "В архиве не найдено медиа-файлов поддерживаемых форматов"
+        
+        return media_files[0], f"Найден медиа-файл (исправлена кодировка): {media_files[0][1]}"
+        
+    except Exception as e:
+        return None, f"Ошибка альтернативного извлечения: {str(e)}"
 
 
 async def convert_cloud_url_to_direct(url):
