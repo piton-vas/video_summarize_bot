@@ -84,6 +84,7 @@ curl -o docker-compose.yml https://raw.githubusercontent.com/piton-vas/video_sum
 
 3. Создайте файл `.env` с токеном бота (см. выше)
 
+
 4. Запустите бота с автообновлением:
 ```bash
 docker-compose up -d
