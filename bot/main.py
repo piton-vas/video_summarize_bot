@@ -256,6 +256,60 @@ def is_valid_url(url):
     return url_pattern.match(url) is not None
 
 
+async def convert_cloud_url_to_direct(url):
+    """Преобразует ссылки облачных хранилищ в прямые ссылки"""
+    try:
+        # Обработка cloud.mail.ru
+        if 'cloud.mail.ru/public/' in url:
+            # Извлекаем код файла из URL
+            match = re.search(r'cloud\.mail\.ru/public/([^/]+)', url)
+            if match:
+                file_code = match.group(1)
+                # Формируем прямую ссылку для скачивания
+                direct_url = f"https://cloud.mail.ru/public/{file_code}?download=1"
+                return direct_url
+        
+        # Обработка Google Drive
+        elif 'drive.google.com' in url:
+            # Извлекаем ID файла
+            file_id = None
+            if '/file/d/' in url:
+                match = re.search(r'/file/d/([a-zA-Z0-9-_]+)', url)
+                if match:
+                    file_id = match.group(1)
+            elif 'id=' in url:
+                match = re.search(r'id=([a-zA-Z0-9-_]+)', url)
+                if match:
+                    file_id = match.group(1)
+            
+            if file_id:
+                # Формируем прямую ссылку для скачивания
+                direct_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+                return direct_url
+        
+        # Обработка Dropbox
+        elif 'dropbox.com' in url and '?dl=0' in url:
+            # Заменяем ?dl=0 на ?dl=1 для прямого скачивания
+            direct_url = url.replace('?dl=0', '?dl=1')
+            return direct_url
+        
+        # Обработка OneDrive
+        elif 'onedrive.live.com' in url or '1drv.ms' in url:
+            # Для OneDrive нужно добавить &download=1
+            if '?' in url:
+                direct_url = url + '&download=1'
+            else:
+                direct_url = url + '?download=1'
+            return direct_url
+            
+        # Если не удалось преобразовать, возвращаем исходный URL
+        return url
+        
+    except Exception as e:
+        logger.error(f"Ошибка преобразования URL: {e}")
+        return url
+
+
 @dp.message(CommandStart())
 async def command_start_handler(message: Message) -> None:
     """
@@ -270,9 +324,10 @@ async def command_start_handler(message: Message) -> None:
         f"• /help - подробная справка\n"
         f"• /status - статус системы\n\n"
         f"<b>Как использовать:</b>\n"
-        f"Отправьте мне видео/аудио файл или прямую ссылку на файл, и я создам расшифровку с кратким содержанием!\n\n"
+        f"Отправьте мне видео/аудио файл или ссылку на файл, и я создам расшифровку с кратким содержанием!\n\n"
         f"📎 Файлы до 20 МБ - прикрепите напрямую\n"
-        f"🔗 Файлы до 500 МБ - отправьте ссылку"
+        f"🔗 Файлы до 500 МБ - отправьте ссылку\n"
+        f"☁️ Поддерживаются облачные хранилища"
     )
 
 
@@ -332,7 +387,9 @@ async def help_handler(message: Message) -> None:
         "• Аудио: MP3, WAV, M4A, OGG, FLAC\n\n"
         "<b>Способы отправки файлов:</b>\n"
         "1. 📎 Прикрепить файл напрямую (до 20 МБ)\n"
-        "2. 🔗 Отправить прямую ссылку на файл (до 500 МБ)\n\n"
+        "2. 🔗 Отправить ссылку на файл (до 500 МБ)\n"
+        "   • Прямые ссылки на файлы\n"
+        "   • Cloud.mail.ru, Google Drive, Dropbox, OneDrive\n\n"
         "<b>Что делает бот:</b>\n"
         "1. Принимает ваш файл или ссылку\n"
         "2. Ставит задачу в очередь обработки\n"
@@ -476,9 +533,13 @@ async def url_handler(message: Message) -> None:
     status_message = await message.answer("🔗 Анализирую ссылку...")
     
     try:
-        # Скачиваем файл по URL
+        # Преобразуем ссылку облачного хранилища в прямую ссылку
+        await status_message.edit_text("🔗 Обрабатываю ссылку...")
+        direct_url = await convert_cloud_url_to_direct(url)
+        
+        # Скачиваем файл по прямой ссылке
         await status_message.edit_text("📥 Скачиваю файл...")
-        tmp_path, file_name = await download_file_from_url(url)
+        tmp_path, file_name = await download_file_from_url(direct_url)
         
         if not tmp_path:
             await status_message.edit_text(f"❌ {file_name}")
@@ -537,7 +598,8 @@ async def echo_handler(message: Message) -> None:
         "Отправьте мне:\n"
         "• Видео файл (MP4, AVI, MOV, MKV, WMV, WEBM)\n"
         "• Аудио файл (MP3, WAV, M4A, OGG, FLAC)\n"
-        "• Прямую ссылку на файл (до 500 МБ)\n\n"
+        "• Ссылку на файл (до 500 МБ)\n"
+        "• Файлы из облачных хранилищ (Mail.ru, Google Drive, Dropbox, OneDrive)\n\n"
         "Или используйте команду /help для подробной справки."
     )
 
