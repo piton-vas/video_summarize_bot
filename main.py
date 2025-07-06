@@ -10,7 +10,6 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
-import aioredis
 from rq import Queue
 import redis
 
@@ -46,7 +45,6 @@ dp = Dispatcher()
 
 # Подключения к Redis
 redis_conn = None
-redis_async = None
 video_queue = None
 
 # Словарь для хранения состояний пользователей
@@ -54,15 +52,12 @@ user_states = {}
 
 async def init_redis():
     """Инициализация Redis подключений"""
-    global redis_conn, redis_async, video_queue
+    global redis_conn, video_queue
     
     try:
-        # Синхронное подключение для RQ
+        # Синхронное подключение для RQ и мониторинга
         redis_conn = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
         redis_conn.ping()
-        
-        # Асинхронное подключение для мониторинга
-        redis_async = await aioredis.create_redis_pool(f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}')
         
         # Очередь для видео обработки
         video_queue = Queue('video_processing', connection=redis_conn)
@@ -93,18 +88,18 @@ async def add_video_task(user_id, file_path, task_id):
         logger.error(f"Ошибка добавления задачи в очередь: {e}")
         return None
 
-async def get_task_status(task_id):
+def get_task_status(task_id):
     """Получает статус задачи из Redis"""
     try:
         task_key = f"task:{task_id}"
-        task_data = await redis_async.hgetall(task_key)
+        task_data = redis_conn.hgetall(task_key)
         
         if task_data:
             return {
-                'status': task_data.get(b'status', b'unknown').decode(),
-                'message': task_data.get(b'message', b'').decode(),
-                'result': task_data.get(b'result', b'').decode(),
-                'updated_at': task_data.get(b'updated_at', b'').decode()
+                'status': task_data.get('status', 'unknown'),
+                'message': task_data.get('message', ''),
+                'result': task_data.get('result', ''),
+                'updated_at': task_data.get('updated_at', '')
             }
         return None
     except Exception as e:
@@ -117,7 +112,7 @@ async def monitor_task(task_id, user_id, status_message):
         last_status = ""
         
         while True:
-            task_status = await get_task_status(task_id)
+            task_status = get_task_status(task_id)
             
             if not task_status:
                 await asyncio.sleep(5)

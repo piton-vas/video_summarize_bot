@@ -79,6 +79,9 @@ docker-compose ps
 
 # Просмотр логов
 docker-compose logs -f
+### Просмотр логов Telegram бота
+docker-compose logs -f telegram-bot
+
 ```
 
 ### 5. Мониторинг (опционально)
